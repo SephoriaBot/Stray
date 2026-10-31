@@ -23,21 +23,65 @@ type OsmElement = {
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ]
 
-const SEARCH_RADIUS_METERS = 40000 // about 25 miles
+const RADIUS_MILES = 25
 const MAX_RESULTS = 25
 
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function firstSuccess<T>(tasks: Promise<T>[]): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let failed = 0
+    let lastError: unknown = null
+    tasks.forEach((task) => {
+      task.then(resolve).catch((err) => {
+        lastError = err
+        failed += 1
+        if (failed === tasks.length) reject(lastError)
+      })
+    })
+  })
+}
+
 export async function geocodeZip(zip: string): Promise<Coords> {
-  const url =
-    'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&postalcode=' +
-    encodeURIComponent(zip)
-  const res = await fetch(url, { headers: { Accept: 'application/json' } })
-  if (!res.ok) throw new Error('lookup-failed')
-  const data = (await res.json()) as { lat: string; lon: string }[]
-  if (data.length === 0) throw new Error('zip-not-found')
-  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
+  // First choice: a simple free ZIP lookup.
+  try {
+    const res = await fetchWithTimeout('https://api.zippopotam.us/us/' + encodeURIComponent(zip), {}, 8000)
+    if (res.status === 404) throw new Error('zip-not-found')
+    if (res.ok) {
+      const data = (await res.json()) as { places?: { latitude: string; longitude: string }[] }
+      const place = data.places?.[0]
+      if (place) return { lat: parseFloat(place.latitude), lon: parseFloat(place.longitude) }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'zip-not-found') throw err
+  }
+
+  // Backup: OpenStreetMap's Nominatim.
+  try {
+    const url =
+      'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&postalcode=' +
+      encodeURIComponent(zip)
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 8000)
+    if (!res.ok) throw new Error('geocode-failed')
+    const data = (await res.json()) as { lat: string; lon: string }[]
+    if (data.length === 0) throw new Error('zip-not-found')
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'zip-not-found') throw err
+    throw new Error('geocode-failed')
+  }
 }
 
 function haversineMiles(a: Coords, b: Coords): number {
@@ -72,35 +116,42 @@ function cleanPhone(raw: string | undefined): string | null {
   return first || null
 }
 
-async function queryOverpass(query: string): Promise<OsmElement[]> {
-  let lastError: unknown = null
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-      })
-      if (!res.ok) throw new Error('overpass-' + res.status)
-      const json = (await res.json()) as { elements?: OsmElement[] }
-      return json.elements ?? []
-    } catch (err) {
-      lastError = err
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('overpass-failed')
+async function queryOneEndpoint(endpoint: string, query: string): Promise<OsmElement[]> {
+  const res = await fetchWithTimeout(
+    endpoint,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(query),
+    },
+    15000,
+  )
+  if (!res.ok) throw new Error('overpass-' + res.status)
+  const json = (await res.json()) as { elements?: OsmElement[] }
+  return json.elements ?? []
 }
 
 export async function findShelters(origin: Coords): Promise<Shelter[]> {
-  const around = `(around:${SEARCH_RADIUS_METERS},${origin.lat},${origin.lon})`
-  const query =
-    '[out:json][timeout:25];(' +
-    `node["amenity"="animal_shelter"]${around};` +
-    `way["amenity"="animal_shelter"]${around};` +
-    `relation["amenity"="animal_shelter"]${around};` +
-    ');out center tags;'
+  const dLat = RADIUS_MILES / 69
+  const dLon = RADIUS_MILES / (69 * Math.cos((origin.lat * Math.PI) / 180))
+  const south = (origin.lat - dLat).toFixed(5)
+  const north = (origin.lat + dLat).toFixed(5)
+  const west = (origin.lon - dLon).toFixed(5)
+  const east = (origin.lon + dLon).toFixed(5)
 
-  const elements = await queryOverpass(query)
+  const query =
+    '[out:json][timeout:20];' +
+    `nwr["amenity"="animal_shelter"](${south},${west},${north},${east});` +
+    'out center tags;'
+
+  let elements: OsmElement[]
+  try {
+    // Ask every server at once and use whichever answers first.
+    elements = await firstSuccess(OVERPASS_ENDPOINTS.map((endpoint) => queryOneEndpoint(endpoint, query)))
+  } catch {
+    throw new Error('search-failed')
+  }
+
   const seen = new Set<string>()
   const shelters: Shelter[] = []
 
@@ -112,6 +163,9 @@ export async function findShelters(origin: Coords): Promise<Shelter[]> {
     if (seen.has(id)) continue
     seen.add(id)
 
+    const miles = haversineMiles(origin, { lat, lon })
+    if (miles > RADIUS_MILES) continue
+
     const tags = el.tags ?? {}
     shelters.push({
       id,
@@ -122,7 +176,7 @@ export async function findShelters(origin: Coords): Promise<Shelter[]> {
       hours: tags.opening_hours ?? null,
       lat,
       lon,
-      miles: haversineMiles(origin, { lat, lon }),
+      miles,
     })
   }
 
