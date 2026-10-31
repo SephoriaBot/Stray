@@ -10,7 +10,10 @@ import Shelters from './pages/Shelters'
 export default function App() {
   return (
     <div className="app">
-      <header className="topbar">{APP_NAME}</header>
+      <header className="topbar">
+        <img className="topbar-icon" src="/straysicon.png" alt="" width={32} height={32} />
+        <span>{APP_NAME}</span>
+      </header>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/emergency" element={<Emergency />} />
