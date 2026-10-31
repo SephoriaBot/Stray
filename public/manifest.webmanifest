@@ -1,0 +1,18 @@
+{
+  "name": "Stray",
+  "short_name": "Stray",
+  "description": "Know what to do, who to call, and where to go when you find a stray animal.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F4F7F8",
+  "theme_color": "#FFFFFF",
+  "icons": [
+    {
+      "src": "/straysicon.png",
+      "sizes": "192x192 512x512 1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
