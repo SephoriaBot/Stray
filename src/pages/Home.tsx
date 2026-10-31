@@ -16,15 +16,15 @@ export default function Home() {
       <h2 className="section-title">If it is not an emergency</h2>
       <ul className="link-list">
         <li>
-          <Link to="/guides">
+          <Link to="/guides/what-to-do-first">
             <span className="link-title">What to do first</span>
             <span className="link-desc">Approach safely, look for a collar, and decide your next step.</span>
           </Link>
         </li>
         <li>
           <Link to="/guides">
-            <span className="link-title">Make a temporary shelter</span>
-            <span className="link-desc">Keep the animal warm and dry until help arrives.</span>
+            <span className="link-title">All guides</span>
+            <span className="link-desc">Shelters, food, who to call, and more as they are added.</span>
           </Link>
         </li>
         <li>
