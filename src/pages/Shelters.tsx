@@ -10,7 +10,8 @@ function errorText(err: unknown): string {
   if (code === 'zip-not-found') return 'We could not find that ZIP code. Check it and try again.'
   if (code === 'location-denied') return 'We could not get your location. Enter a ZIP code instead.'
   if (code === 'no-geolocation') return 'Your browser cannot share its location. Enter a ZIP code instead.'
-  return 'The shelter search is not responding. Try again in a minute.'
+  if (code === 'geocode-failed') return 'We could not look up that ZIP code right now. Try again in a minute.'
+  return 'The shelter database is busy right now. Try again in a minute.'
 }
 
 function phoneHref(phone: string): string {
