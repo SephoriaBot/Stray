@@ -12,6 +12,14 @@ export type Shelter = {
   miles: number
 }
 
+export class SearchError extends Error {
+  details: string
+  constructor(message: string, details: string) {
+    super(message)
+    this.details = details
+  }
+}
+
 type OsmElement = {
   type: string
   id: number
@@ -19,6 +27,17 @@ type OsmElement = {
   lon?: number
   center?: { lat: number; lon: number }
   tags?: Record<string, string>
+}
+
+type NominatimItem = {
+  osm_type: string
+  osm_id: number
+  lat: string
+  lon: string
+  name?: string
+  display_name: string
+  extratags?: Record<string, string>
+  address?: Record<string, string>
 }
 
 const OVERPASS_ENDPOINTS = [
@@ -29,6 +48,10 @@ const OVERPASS_ENDPOINTS = [
 
 const RADIUS_MILES = 25
 const MAX_RESULTS = 25
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : 'unknown error'
+}
 
 async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
   const controller = new AbortController()
@@ -42,13 +65,11 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Pro
 
 function firstSuccess<T>(tasks: Promise<T>[]): Promise<T> {
   return new Promise((resolve, reject) => {
-    let failed = 0
-    let lastError: unknown = null
+    const errors: string[] = []
     tasks.forEach((task) => {
       task.then(resolve).catch((err) => {
-        lastError = err
-        failed += 1
-        if (failed === tasks.length) reject(lastError)
+        errors.push(describeError(err))
+        if (errors.length === tasks.length) reject(new Error(errors.join('; ')))
       })
     })
   })
@@ -116,45 +137,54 @@ function cleanPhone(raw: string | undefined): string | null {
   return first || null
 }
 
-async function queryOneEndpoint(endpoint: string, query: string): Promise<OsmElement[]> {
-  const res = await fetchWithTimeout(
-    endpoint,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(query),
-    },
-    15000,
-  )
-  if (!res.ok) throw new Error('overpass-' + res.status)
-  const json = (await res.json()) as { elements?: OsmElement[] }
-  return json.elements ?? []
+function finish(shelters: Shelter[]): Shelter[] {
+  shelters.sort((a, b) => a.miles - b.miles)
+  return shelters.slice(0, MAX_RESULTS)
 }
 
-export async function findShelters(origin: Coords): Promise<Shelter[]> {
+function boundingBox(origin: Coords) {
   const dLat = RADIUS_MILES / 69
   const dLon = RADIUS_MILES / (69 * Math.cos((origin.lat * Math.PI) / 180))
-  const south = (origin.lat - dLat).toFixed(5)
-  const north = (origin.lat + dLat).toFixed(5)
-  const west = (origin.lon - dLon).toFixed(5)
-  const east = (origin.lon + dLon).toFixed(5)
+  return {
+    south: origin.lat - dLat,
+    north: origin.lat + dLat,
+    west: origin.lon - dLon,
+    east: origin.lon + dLon,
+  }
+}
 
+async function queryOneEndpoint(endpoint: string, query: string): Promise<OsmElement[]> {
+  const host = new URL(endpoint).host
+  try {
+    const res = await fetchWithTimeout(
+      endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+      },
+      15000,
+    )
+    if (!res.ok) throw new Error('error ' + res.status)
+    const json = (await res.json()) as { elements?: OsmElement[] }
+    return json.elements ?? []
+  } catch (err) {
+    throw new Error(host + ' ' + describeError(err))
+  }
+}
+
+async function searchOverpass(origin: Coords): Promise<Shelter[]> {
+  const box = boundingBox(origin)
   const query =
     '[out:json][timeout:20];' +
-    `nwr["amenity"="animal_shelter"](${south},${west},${north},${east});` +
+    `nwr["amenity"="animal_shelter"](${box.south.toFixed(5)},${box.west.toFixed(5)},${box.north.toFixed(5)},${box.east.toFixed(5)});` +
     'out center tags;'
 
-  let elements: OsmElement[]
-  try {
-    // Ask every server at once and use whichever answers first.
-    elements = await firstSuccess(OVERPASS_ENDPOINTS.map((endpoint) => queryOneEndpoint(endpoint, query)))
-  } catch {
-    throw new Error('search-failed')
-  }
+  // Ask every server at once and use whichever answers first.
+  const elements = await firstSuccess(OVERPASS_ENDPOINTS.map((endpoint) => queryOneEndpoint(endpoint, query)))
 
   const seen = new Set<string>()
   const shelters: Shelter[] = []
-
   for (const el of elements) {
     const lat = el.lat ?? el.center?.lat
     const lon = el.lon ?? el.center?.lon
@@ -179,7 +209,63 @@ export async function findShelters(origin: Coords): Promise<Shelter[]> {
       miles,
     })
   }
+  return finish(shelters)
+}
 
-  shelters.sort((a, b) => a.miles - b.miles)
-  return shelters.slice(0, MAX_RESULTS)
+// Backup search using Nominatim, which is a different server from Overpass.
+async function searchNominatim(origin: Coords): Promise<Shelter[]> {
+  const box = boundingBox(origin)
+  const url =
+    'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=40&bounded=1&extratags=1&addressdetails=1' +
+    `&q=${encodeURIComponent('animal shelter')}` +
+    `&viewbox=${box.west},${box.north},${box.east},${box.south}`
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 12000)
+  if (!res.ok) throw new Error('error ' + res.status)
+  const items = (await res.json()) as NominatimItem[]
+
+  const shelters: Shelter[] = []
+  for (const item of items) {
+    const lat = parseFloat(item.lat)
+    const lon = parseFloat(item.lon)
+    const miles = haversineMiles(origin, { lat, lon })
+    if (miles > RADIUS_MILES) continue
+
+    const extra = item.extratags ?? {}
+    const addr = item.address ?? {}
+    const street = [addr.house_number, addr.road].filter(Boolean).join(' ')
+    const town = addr.city ?? addr.town ?? addr.village ?? addr.hamlet
+    const cityState = [town, addr.state].filter(Boolean).join(', ')
+    const address = [street, cityState].filter(Boolean).join(', ')
+
+    shelters.push({
+      id: item.osm_type + '/' + item.osm_id,
+      name: item.name || item.display_name.split(',')[0] || 'Animal shelter (name not listed)',
+      address: address || null,
+      phone: cleanPhone(extra.phone ?? extra['contact:phone']),
+      website: cleanWebsite(extra.website ?? extra['contact:website']),
+      hours: extra.opening_hours ?? null,
+      lat,
+      lon,
+      miles,
+    })
+  }
+  return finish(shelters)
+}
+
+export async function findShelters(origin: Coords): Promise<Shelter[]> {
+  const problems: string[] = []
+
+  try {
+    return await searchOverpass(origin)
+  } catch (err) {
+    problems.push('Overpass: ' + describeError(err))
+  }
+
+  try {
+    return await searchNominatim(origin)
+  } catch (err) {
+    problems.push('Nominatim: ' + describeError(err))
+  }
+
+  throw new SearchError('search-failed', problems.join(' | '))
 }
