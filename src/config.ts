@@ -1,2 +1,2 @@
 // Placeholder name. Change it here and it updates everywhere.
-export const APP_NAME = 'Stray Help'
+export const APP_NAME = 'Stray'
