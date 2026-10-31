@@ -49,6 +49,43 @@ const OVERPASS_ENDPOINTS = [
 const RADIUS_MILES = 25
 const MAX_RESULTS = 25
 
+// How long to wait on each server before giving up on it.
+const GEOCODE_TIMEOUT_MS = 5000
+const OVERPASS_TIMEOUT_MS = 12000
+const NOMINATIM_TIMEOUT_MS = 10000
+
+// How long saved results stay fresh on the phone.
+const SHELTER_CACHE_MS = 12 * 60 * 60 * 1000
+const ZIP_CACHE_MS = 30 * 24 * 60 * 60 * 1000
+const CACHE_PREFIX = 'stray:'
+
+type CacheEntry<T> = { savedAt: number; value: T }
+
+function readCache<T>(key: string): CacheEntry<T> | null {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as CacheEntry<T>
+    if (typeof parsed.savedAt !== 'number') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeCache<T>(key: string, value: T): void {
+  try {
+    const entry: CacheEntry<T> = { savedAt: Date.now(), value }
+    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry))
+  } catch {
+    // Saving is optional. If the phone blocks it, the app still works.
+  }
+}
+
+function isFresh(entry: CacheEntry<unknown>, maxAgeMs: number): boolean {
+  return Date.now() - entry.savedAt < maxAgeMs
+}
+
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : 'unknown error'
 }
@@ -75,10 +112,41 @@ function firstSuccess<T>(tasks: Promise<T>[]): Promise<T> {
   })
 }
 
-export async function geocodeZip(zip: string): Promise<Coords> {
+// Runs searches at the same time and returns the first one that finds shelters.
+// An empty answer only wins if every search finished and none found anything.
+function firstWithResults(tasks: { name: string; run: Promise<Shelter[]> }[]): Promise<Shelter[]> {
+  return new Promise((resolve, reject) => {
+    let pending = tasks.length
+    let sawEmpty = false
+    const problems: string[] = []
+    tasks.forEach(({ name, run }) => {
+      run
+        .then((list) => {
+          if (list.length > 0) resolve(list)
+          else sawEmpty = true
+        })
+        .catch((err) => {
+          problems.push(name + ': ' + describeError(err))
+        })
+        .finally(() => {
+          pending -= 1
+          if (pending === 0) {
+            if (sawEmpty) resolve([])
+            else reject(new SearchError('search-failed', problems.join(' | ')))
+          }
+        })
+    })
+  })
+}
+
+async function lookupZip(zip: string): Promise<Coords> {
   // First choice: a simple free ZIP lookup.
   try {
-    const res = await fetchWithTimeout('https://api.zippopotam.us/us/' + encodeURIComponent(zip), {}, 8000)
+    const res = await fetchWithTimeout(
+      'https://api.zippopotam.us/us/' + encodeURIComponent(zip),
+      {},
+      GEOCODE_TIMEOUT_MS,
+    )
     if (res.status === 404) throw new Error('zip-not-found')
     if (res.ok) {
       const data = (await res.json()) as { places?: { latitude: string; longitude: string }[] }
@@ -94,7 +162,7 @@ export async function geocodeZip(zip: string): Promise<Coords> {
     const url =
       'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&postalcode=' +
       encodeURIComponent(zip)
-    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 8000)
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, GEOCODE_TIMEOUT_MS)
     if (!res.ok) throw new Error('geocode-failed')
     const data = (await res.json()) as { lat: string; lon: string }[]
     if (data.length === 0) throw new Error('zip-not-found')
@@ -103,6 +171,16 @@ export async function geocodeZip(zip: string): Promise<Coords> {
     if (err instanceof Error && err.message === 'zip-not-found') throw err
     throw new Error('geocode-failed')
   }
+}
+
+export async function geocodeZip(zip: string): Promise<Coords> {
+  const key = 'zip:' + zip
+  const cached = readCache<Coords>(key)
+  if (cached && isFresh(cached, ZIP_CACHE_MS)) return cached.value
+
+  const coords = await lookupZip(zip)
+  writeCache(key, coords)
+  return coords
 }
 
 function haversineMiles(a: Coords, b: Coords): number {
@@ -163,7 +241,7 @@ async function queryOneEndpoint(endpoint: string, query: string): Promise<OsmEle
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
       },
-      15000,
+      OVERPASS_TIMEOUT_MS,
     )
     if (!res.ok) throw new Error('error ' + res.status)
     const json = (await res.json()) as { elements?: OsmElement[] }
@@ -176,7 +254,7 @@ async function queryOneEndpoint(endpoint: string, query: string): Promise<OsmEle
 async function searchOverpass(origin: Coords): Promise<Shelter[]> {
   const box = boundingBox(origin)
   const query =
-    '[out:json][timeout:20];' +
+    '[out:json][timeout:10];' +
     `nwr["amenity"="animal_shelter"](${box.south.toFixed(5)},${box.west.toFixed(5)},${box.north.toFixed(5)},${box.east.toFixed(5)});` +
     'out center tags;'
 
@@ -212,14 +290,14 @@ async function searchOverpass(origin: Coords): Promise<Shelter[]> {
   return finish(shelters)
 }
 
-// Backup search using Nominatim, which is a different server from Overpass.
+// A second search on a different server, run at the same time as the first.
 async function searchNominatim(origin: Coords): Promise<Shelter[]> {
   const box = boundingBox(origin)
   const url =
     'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=40&bounded=1&extratags=1&addressdetails=1' +
     `&q=${encodeURIComponent('animal shelter')}` +
     `&viewbox=${box.west},${box.north},${box.east},${box.south}`
-  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 12000)
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, NOMINATIM_TIMEOUT_MS)
   if (!res.ok) throw new Error('error ' + res.status)
   const items = (await res.json()) as NominatimItem[]
 
@@ -252,20 +330,28 @@ async function searchNominatim(origin: Coords): Promise<Shelter[]> {
   return finish(shelters)
 }
 
+// Saved results were measured from a nearby point, so measure again from here.
+function remeasure(list: Shelter[], origin: Coords): Shelter[] {
+  return finish(list.map((shelter) => ({ ...shelter, miles: haversineMiles(origin, shelter) })))
+}
+
 export async function findShelters(origin: Coords): Promise<Shelter[]> {
-  const problems: string[] = []
+  const key = 'shelters:' + origin.lat.toFixed(2) + ',' + origin.lon.toFixed(2)
+  const cached = readCache<Shelter[]>(key)
+
+  // A recent search for this area shows up instantly.
+  if (cached && isFresh(cached, SHELTER_CACHE_MS)) return remeasure(cached.value, origin)
 
   try {
-    return await searchOverpass(origin)
+    const found = await firstWithResults([
+      { name: 'Overpass', run: searchOverpass(origin) },
+      { name: 'Nominatim', run: searchNominatim(origin) },
+    ])
+    if (found.length > 0) writeCache(key, found)
+    return found
   } catch (err) {
-    problems.push('Overpass: ' + describeError(err))
+    // If the servers are down, an older saved list is better than nothing.
+    if (cached && cached.value.length > 0) return remeasure(cached.value, origin)
+    throw err
   }
-
-  try {
-    return await searchNominatim(origin)
-  } catch (err) {
-    problems.push('Nominatim: ' + describeError(err))
-  }
-
-  throw new SearchError('search-failed', problems.join(' | '))
 }
