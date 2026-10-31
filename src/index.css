@@ -292,3 +292,75 @@ input:focus-visible {
   font-size: 0.8125rem;
   color: var(--ink-soft);
 }
+
+.callout {
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.125rem;
+  border-left: 4px solid var(--alert);
+  border-radius: 0 10px 10px 0;
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.section-heading {
+  margin: 2rem 0 0.75rem;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.check-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.check-list li {
+  margin: 0.375rem 0;
+}
+
+.note {
+  margin: 0.75rem 0 0;
+  color: var(--ink-soft);
+}
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  border-top: 1px solid var(--line);
+}
+
+.steps li {
+  position: relative;
+  padding: 1rem 0 1rem 2.75rem;
+  border-bottom: 1px solid var(--line);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.875rem;
+  height: 1.875rem;
+  border-radius: 50%;
+  background: var(--teal-deep);
+  color: #ffffff;
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+.step-title {
+  display: block;
+  font-weight: 700;
+}
+
+.step-text {
+  display: block;
+  color: var(--ink-soft);
+}
