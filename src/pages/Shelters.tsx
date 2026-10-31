@@ -22,6 +22,11 @@ function directionsHref(shelter: Shelter): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${shelter.lat},${shelter.lon}`
 }
 
+function phoneSearchHref(shelter: Shelter): string {
+  const query = [shelter.name, shelter.address, 'phone number'].filter(Boolean).join(' ')
+  return 'https://www.google.com/search?q=' + encodeURIComponent(query)
+}
+
 export default function Shelters() {
   const [zip, setZip] = useState('')
   const [status, setStatus] = useState<Status>('idle')
@@ -130,6 +135,11 @@ export default function Shelters() {
                 {shelter.hours && <p className="shelter-meta">Hours: {shelter.hours}</p>}
                 <div className="shelter-actions">
                   {shelter.phone && <a href={phoneHref(shelter.phone)}>Call {shelter.phone}</a>}
+                  {!shelter.phone && (
+                    <a href={phoneSearchHref(shelter)} target="_blank" rel="noopener noreferrer">
+                      Find phone number
+                    </a>
+                  )}
                   {shelter.website && (
                     <a href={shelter.website} target="_blank" rel="noopener noreferrer">
                       Website
