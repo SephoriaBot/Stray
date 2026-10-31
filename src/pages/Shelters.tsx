@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { findShelters, geocodeZip } from '../lib/shelters'
+import { SearchError, findShelters, geocodeZip } from '../lib/shelters'
 import type { Coords, Shelter } from '../lib/shelters'
 
 type Status = 'idle' | 'loading' | 'done' | 'error'
@@ -27,10 +27,12 @@ export default function Shelters() {
   const [status, setStatus] = useState<Status>('idle')
   const [shelters, setShelters] = useState<Shelter[]>([])
   const [message, setMessage] = useState('')
+  const [detail, setDetail] = useState('')
 
   async function run(getCoords: () => Promise<Coords>) {
     setStatus('loading')
     setMessage('')
+    setDetail('')
     try {
       const coords = await getCoords()
       const found = await findShelters(coords)
@@ -39,6 +41,7 @@ export default function Shelters() {
     } catch (err) {
       setStatus('error')
       setMessage(errorText(err))
+      setDetail(err instanceof SearchError ? err.details : '')
     }
   }
 
@@ -48,6 +51,7 @@ export default function Shelters() {
     if (!/^\d{5}$/.test(clean)) {
       setStatus('error')
       setMessage('Enter a 5-digit ZIP code.')
+      setDetail('')
       return
     }
     void run(() => geocodeZip(clean))
@@ -102,6 +106,7 @@ export default function Shelters() {
       <div aria-live="polite">
         {loading && <p className="notice">Searching for shelters...</p>}
         {status === 'error' && <p className="notice notice-error">{message}</p>}
+        {status === 'error' && detail && <p className="attribution">Details: {detail}</p>}
         {status === 'done' && shelters.length === 0 && (
           <p className="notice">
             No shelters found within 25 miles. Try a nearby ZIP code, or call your local animal control.
