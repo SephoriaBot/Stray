@@ -6,6 +6,7 @@ import Emergency from './pages/Emergency'
 import Guides from './pages/Guides'
 import GuideDetail from './pages/GuideDetail'
 import Shelters from './pages/Shelters'
+import Flyer from './pages/Flyer'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/guides" element={<Guides />} />
         <Route path="/guides/:slug" element={<GuideDetail />} />
         <Route path="/shelters" element={<Shelters />} />
+        <Route path="/flyer" element={<Flyer />} />
         <Route path="*" element={<Home />} />
       </Routes>
       <BottomNav />

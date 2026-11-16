@@ -1,0 +1,159 @@
+.flyer-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.flyer-form .field,
+.flyer-form .field-label {
+  width: 100%;
+}
+
+.flyer-form .field-label {
+  margin-top: 1rem;
+}
+
+.flyer-form .note {
+  margin: 0.375rem 0 0;
+}
+
+.flyer-textarea {
+  resize: vertical;
+  min-height: 5rem;
+}
+
+.flyer-toggle {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: var(--peach-soft);
+}
+
+.flyer-toggle button {
+  flex: 1;
+  padding: 0.625rem 0.75rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.flyer-toggle button.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.flyer-remove {
+  align-self: flex-start;
+  margin-top: 0.5rem;
+}
+
+.flyer {
+  overflow: hidden;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.flyer-head {
+  padding: 1.25rem 1rem;
+  background: var(--sage);
+  color: #ffffff;
+  font-size: 2rem;
+  font-weight: 900;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.flyer-lost .flyer-head {
+  background: var(--alert);
+}
+
+.flyer-photo {
+  display: block;
+  width: calc(100% - 2rem);
+  max-height: 22rem;
+  margin: 1rem auto 0;
+  border-radius: 16px;
+  object-fit: cover;
+}
+
+.flyer-body {
+  padding: 1rem 1.25rem;
+}
+
+.flyer-body p {
+  margin: 0 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.flyer-name,
+.flyer-where {
+  font-size: 1.125rem;
+  font-weight: 800;
+}
+
+.flyer-desc {
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+}
+
+.flyer-call {
+  font-weight: 800;
+}
+
+.flyer-contact {
+  padding: 1rem;
+  background: var(--peach-soft);
+  font-size: 1.5rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.flyer-foot {
+  padding: 0.5rem;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.flyer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .flyer,
+  .flyer * {
+    visibility: visible;
+  }
+
+  .flyer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .flyer-head,
+  .flyer-contact {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .flyer-foot {
+    display: none;
+  }
+}

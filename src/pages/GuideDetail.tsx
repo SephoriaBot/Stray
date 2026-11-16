@@ -32,6 +32,9 @@ export default function GuideDetail() {
                 <li key={step.title}>
                   <span className="step-title">{step.title}</span>
                   <span className="step-text">{step.text}</span>
+                  {step.link && (
+                    <Link to={step.link.to} className="text-link">{step.link.label}</Link>
+                  )}
                 </li>
               ))}
             </ol>

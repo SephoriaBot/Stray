@@ -28,6 +28,12 @@ export default function Home() {
           </Link>
         </li>
         <li>
+          <Link to="/flyer">
+            <span className="link-title">Make a found pet flyer</span>
+            <span className="link-desc">Print it or save it as an image to post online.</span>
+          </Link>
+        </li>
+        <li>
           <Link to="/shelters">
             <span className="link-title">Find shelters near you</span>
             <span className="link-desc">Phone numbers, addresses, and hours.</span>
